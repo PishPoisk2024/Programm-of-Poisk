@@ -1,0 +1,67 @@
+import struct
+import serial
+import time
+
+# Установка параметров порта для отправки
+ser_send = serial.Serial('COM5', 115200, timeout=1)
+
+# Установка параметров порта для приема
+ser_receive = serial.Serial('COM13', 115200, timeout=1)
+
+lat = 56.4519127
+lon = 84.9622607
+# data = "15-4-2024"
+# imsi = str(250203708084304)
+# imsi_s = imsi.encode()
+# # text = 'hellow'
+# age = 7
+# RSSI = -22
+# RXLev = -68
+# dataER = 5
+# number = 2506
+
+my_array = [lat, lon]
+
+while True:
+    # Преобразование массива в двоичную последовательность
+    binary_data = bytearray()
+    for item in my_array:
+        if isinstance(item, str):
+            binary_data.extend(item.encode())
+        elif isinstance(item, int):
+            binary_data.extend(item.to_bytes((item.bit_length() + 7) // 8, byteorder='big', signed=True))
+        elif isinstance(item, float):
+            binary_data.extend(bytearray(struct.pack('f', item)))
+
+    print("пакет", my_array)
+    print("tx:", binary_data)
+
+    ser_send.write(b"S") #Передача данных
+    time.sleep(2) #Задержка 2 секунды
+
+    binary_data1 = ser_receive.read(64) #Прием данных
+
+    print(f'rx:{binary_data1}')
+
+    restored_array = []
+    index = 0
+
+    while index < len(binary_data1):
+        item_type = type(my_array[len(restored_array)])
+        if item_type == str:
+            item_length = len(my_array[len(restored_array)].encode())
+            restored_item = binary_data1[index:index + item_length].decode()
+            index += item_length
+        elif item_type == int:
+            item_length = (my_array[len(restored_array)].bit_length() + 7) // 8
+            restored_item = int.from_bytes(binary_data1[index:index + item_length], byteorder='big', signed=True)
+            index += item_length
+        elif item_type == float:
+            restored_item = struct.unpack('f', binary_data1[index:index + 4])[0]
+            index += 4
+
+        restored_array.append(restored_item)
+
+    print("Восстановленный массив:", restored_array)
+
+
