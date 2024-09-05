@@ -1,0 +1,193 @@
+import tkinter
+import customtkinter
+from tkinter import *
+from tkinter import ttk
+from tkintermapview import TkinterMapView
+import time
+import threading
+import math
+import turtle
+import serial
+v = 300000000
+t = 0.00000369
+TA = 1
+lat = 56.4519127
+lon = 84.9622607
+# portRx = serial.Serial('COM5', baudrate=9600)
+# data = portRx.readline()
+# # Декодируем байтовую строку
+# decoded_data = data.decode('utf-8')
+# # Удаляем лишние пробелы и переносы строк
+# cleaned_data = decoded_data.strip()
+# # Разделяем строку на отдельные значения
+# values = cleaned_data.split()
+# # Преобразуем строки в числа (float)
+# lat = float(values[0])
+# lon = float(values[1])
+# imsi = int(float(values[2]))
+# number = int(float(values[3]))
+# RSSI = int(float(values[4]))
+# TA = int(float(values[5]))
+# RXLev = int(float(values[6]))
+# print(lat, lon, imsi, number, RSSI, TA, RXLev)
+# people = [("Абонент №1", imsi, number)]
+
+customtkinter.set_default_color_theme("blue")
+
+class App(customtkinter.CTk, tkinter.Tk):
+
+    APP_NAME = "Поиск с БПЛА" #Название программы
+    WIDTH = 1800 #Ширина окна
+    HEIGHT = 900 #Высота окна
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.i = 0.0001 #Добавочное значение к координатам
+        self.lat = lat #Широта
+        self.lon = lon #Долгота
+        self.marker_list = [] #Лист с маркерами для их очистки
+
+        self.title(App.APP_NAME)
+        self.geometry(str(App.WIDTH) + "x" + str(App.HEIGHT))
+        self.minsize(App.WIDTH, App.HEIGHT)
+
+        self.protocol("WM_DELETE_WINDOW", self.on_closing)
+        self.bind("<Command-q>", self.on_closing)
+        self.bind("<Command-w>", self.on_closing)
+        self.createcommand('tk::mac::Quit', self.on_closing)
+
+        # ============ Создание двух областей ============
+        self.grid_columnconfigure(0, weight=0)
+        self.grid_columnconfigure(1, weight=1)
+        self.grid_rowconfigure(0, weight=1)
+
+        self.frame_left = customtkinter.CTkFrame(master=self, width=150, corner_radius=0, fg_color=None)
+        self.frame_left.grid(row=0, column=0, padx=0, pady=0, sticky="nsew")
+
+        self.frame_right = customtkinter.CTkFrame(master=self, corner_radius=0)
+        self.frame_right.grid(row=0, column=1, rowspan=1, pady=0, padx=0, sticky="nsew")
+
+        # ============ Левая область ============
+        self.frame_left.grid_rowconfigure(2, weight=1)
+
+        self.map_label = customtkinter.CTkLabel(self.frame_left, text="Образ карты:", anchor="w")
+        self.map_label.grid(row=2, column=0, padx=(20, 20), pady=(20, 0))
+        self.map_option_menu = customtkinter.CTkOptionMenu(self.frame_left, values=["OpenStreetMap", "Google normal", "Google satellite"],
+                                                                       command=self.change_map)
+        self.map_option_menu.grid(row=4, column=0, padx=(20, 20), pady=(10, 0))
+
+        # ============ Правая область ============
+        self.frame_right.grid_rowconfigure(1, weight=1)
+        self.frame_right.grid_rowconfigure(0, weight=0)
+        self.frame_right.grid_columnconfigure(0, weight=1)
+        self.frame_right.grid_columnconfigure(1, weight=0)
+        self.frame_right.grid_columnconfigure(2, weight=1)
+
+        self.map_widget = TkinterMapView(self.frame_right, corner_radius=0)
+        self.map_widget.grid(row=1, rowspan=1, column=0, columnspan=3, sticky="nswe", padx=(0, 0), pady=(0, 0))
+
+        self.entry = customtkinter.CTkEntry(master=self.frame_right,
+                                            placeholder_text="Введите адресс")
+        self.entry.grid(row=0, column=1, sticky="we", padx=(12, 12), pady=12)
+        self.entry.bind("<Return>", self.search_event)
+
+        self.frame_right1 = customtkinter.CTkFrame(master=self, corner_radius=0)
+        self.frame_right1.grid(row=0, column=2, rowspan=1, pady=0, padx=0, sticky="nsew")
+
+        self.frame_right1.grid_rowconfigure(1, weight=1)
+        self.frame_right1.grid_rowconfigure(0, weight=0)
+        self.frame_right1.grid_columnconfigure(0, weight=1)
+        self.frame_right1.grid_columnconfigure(1, weight=0)
+        self.frame_right1.grid_columnconfigure(2, weight=1)
+
+        self.table = ttk.Treeview(columns=("Абонент", "IMSI", "Номер"), show="headings", master=self.frame_right1)
+        self.table.heading("Абонент", text="Абонент", anchor="nw")
+        self.table.heading("IMSI", text="IMSI", anchor="nw")
+        self.table.heading("Номер", text="Номер", anchor="nw")
+
+        # for i in people:
+        #     self.table.insert("", "end", values = i)
+        self.table.grid(pady=(52, 0), padx=(0, 0), row=0, column=2)
+
+        self.label = tkinter.Label(text="Полезная информация:", master=self.frame_right1,width=75, height=1)
+        self.label.grid(pady=(50, 0), padx=(0, 0), row=2, column=2)
+
+        self.output_field = tkinter.Text(master=self.frame_right1, width=75, height=40)
+        # self.output_field.insert("1.0", f"Абонент_№1\nRSSI={RSSI}\nTA={TA}\nRXLev={RXLev}\nIMSI={imsi}\nNumberPhone={number}\n")
+        self.output_field.grid(pady=(52, 0), padx=(0, 0), row=3, column=2)
+
+
+        self.button_5 = customtkinter.CTkButton(master=self.frame_right,
+                                                text="Поиск",
+                                                width=90,
+                                                command=self.search_event)
+        self.button_5.grid(row=0, column=0, sticky="w", padx=(0, 0), pady=0)
+
+        # Установка параметров поумолчанию
+        self.map_widget.set_address("Томск")
+        self.map_option_menu.set("OpenStreetMap")
+
+    def search_event(self, event=None):
+        self.map_widget.set_address(self.entry.get())
+
+    def set_marker_event(self):
+        while True:
+            lat1 = self.lat + self.i #Широта с добавочным значением
+            lon1 = self.lon + self.i #Долгота с добавочным значением
+            marker = self.map_widget.set_marker(lat1, lon1) #Установка метки по щироте и долготе
+            self.map_widget.set_position(lat1,lon1) #Установка позиции на метке
+            self.map_widget.set_zoom(16) #Установка приближения на метку
+            self.marker_list.append(marker) #Добавление маркера в маркер лист для дальнейшего удаления
+
+            # Увеличение значения i перед следующим вызовом метода
+            self.i = self.i + 0.001
+
+            # Создание приблизительного круга с помощью полигона
+            radius_x = 0.0032  # предположим, что это радиус овала по оси x в градусах
+            radius_y = 0.0057  # предположим, что это радиус овала по оси y в градусах
+            num_points = 1000  # количество точек для создания овала
+            circle_points = []
+            for i in range(num_points):
+                angle = math.radians(i * (360.0 / num_points))
+                x = lat1 + radius_x * math.cos(angle)
+                y = lon1 + radius_y * math.sin(angle)
+                circle_points.append((x, y))
+
+            polygon_1 = self.map_widget.set_polygon(circle_points, outline_color="black", border_width=1)  # creates the circle
+
+            # Задержка перед следующим обновлением
+            time.sleep(1)
+
+            #Очистка предыдущего маркера и круга
+            for marker in self.marker_list:
+                marker.delete()
+            polygon_1.delete()
+
+    def set_marker_event1(self):
+        t = threading.Thread(target=self.set_marker_event)
+        t.daemon = True  # Помечаем поток как демон, чтобы он завершился при завершении основного потока
+        t.start()
+
+    def change_appearance_mode(self, new_appearance_mode: str):
+        customtkinter.set_appearance_mode(new_appearance_mode)
+
+    def change_map(self, new_map: str):
+        if new_map == "OpenStreetMap":
+            self.map_widget.set_tile_server("https://a.tile.openstreetmap.org/{z}/{x}/{y}.png")
+        elif new_map == "Google normal":
+            self.map_widget.set_tile_server("https://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga", max_zoom=22)
+        elif new_map == "Google satellite":
+            self.map_widget.set_tile_server("https://mt0.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}&s=Ga", max_zoom=22)
+
+    def on_closing(self, event=0):
+        self.destroy()
+
+    def start(self):
+        self.mainloop()
+
+
+if __name__ == "__main__":
+    app = App()
+    app.set_marker_event1()
+    app.start()
