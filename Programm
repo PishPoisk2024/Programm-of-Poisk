@@ -6,33 +6,35 @@ from tkintermapview import TkinterMapView
 import time
 import threading
 import math
-import turtle
 import serial
-v = 300000000
-t = 0.00000369
-TA = 1
-lat = 56.4519127
-lon = 84.9622607
-# portRx = serial.Serial('COM5', baudrate=9600)
-# data = portRx.readline()
-# # Декодируем байтовую строку
-# decoded_data = data.decode('utf-8')
-# # Удаляем лишние пробелы и переносы строк
-# cleaned_data = decoded_data.strip()
-# # Разделяем строку на отдельные значения
-# values = cleaned_data.split()
-# # Преобразуем строки в числа (float)
-# lat = float(values[0])
-# lon = float(values[1])
-# imsi = int(float(values[2]))
-# number = int(float(values[3]))
-# RSSI = int(float(values[4]))
-# TA = int(float(values[5]))
-# RXLev = int(float(values[6]))
-# print(lat, lon, imsi, number, RSSI, TA, RXLev)
-# people = [("Абонент №1", imsi, number)]
 
-customtkinter.set_default_color_theme("blue")
+def rx_data():
+    portRx = serial.Serial('COM5', baudrate=115200)
+    while True:
+        data = portRx.readline()
+        if not data:
+            continue
+        # Декодируем байтовую строку
+        decoded_data = data.decode('utf-8')
+        # Удаляем лишние пробелы и переносы строк
+        cleaned_data = decoded_data.strip()
+        # Разделяем строку на отдельные значения
+        values = cleaned_data.split()
+
+        if len(values) < 7:
+            print(f"Invalid data format: {cleaned_data}")
+            continue
+
+        imsi = int(values[0])
+        RSSI = int(values[1])
+        RXLev = int(values[2])
+        TA = int(values[3])
+        TE = int(values[4])
+        lat = float(values[5])
+        lon = float(values[6])
+        msisdn = int(values[7])
+
+        yield imsi, RSSI, RXLev, TA, TE, lat, lon, msisdn
 
 class App(customtkinter.CTk, tkinter.Tk):
 
@@ -44,9 +46,17 @@ class App(customtkinter.CTk, tkinter.Tk):
         super().__init__(*args, **kwargs)
 
         self.i = 0.0001 #Добавочное значение к координатам
-        self.lat = lat #Широта
-        self.lon = lon #Долгота
+        self.imsi = 0
+        self.RSSI = 0
+        self.RXLev = 0
+        self.TA = 0
+        self.TE = 0
+        self.lat = 0.0
+        self.lon = 0.0
+        self.msisdn = 0
         self.marker_list = [] #Лист с маркерами для их очистки
+        self.map_updated = False # Флаг для отслеживания состояния обновления карты
+        self.known_imsis = set() # Множество для отслеживания уникальных значений IMSI
 
         self.title(App.APP_NAME)
         self.geometry(str(App.WIDTH) + "x" + str(App.HEIGHT))
@@ -105,18 +115,14 @@ class App(customtkinter.CTk, tkinter.Tk):
         self.table.heading("Абонент", text="Абонент", anchor="nw")
         self.table.heading("IMSI", text="IMSI", anchor="nw")
         self.table.heading("Номер", text="Номер", anchor="nw")
-
-        # for i in people:
-        #     self.table.insert("", "end", values = i)
         self.table.grid(pady=(52, 0), padx=(0, 0), row=0, column=2)
+        self.table.bind("<ButtonRelease-1>", self.on_table_click)
 
         self.label = tkinter.Label(text="Полезная информация:", master=self.frame_right1,width=75, height=1)
         self.label.grid(pady=(50, 0), padx=(0, 0), row=2, column=2)
 
         self.output_field = tkinter.Text(master=self.frame_right1, width=75, height=40)
-        # self.output_field.insert("1.0", f"Абонент_№1\nRSSI={RSSI}\nTA={TA}\nRXLev={RXLev}\nIMSI={imsi}\nNumberPhone={number}\n")
         self.output_field.grid(pady=(52, 0), padx=(0, 0), row=3, column=2)
-
 
         self.button_5 = customtkinter.CTkButton(master=self.frame_right,
                                                 text="Поиск",
@@ -125,19 +131,41 @@ class App(customtkinter.CTk, tkinter.Tk):
         self.button_5.grid(row=0, column=0, sticky="w", padx=(0, 0), pady=0)
 
         # Установка параметров поумолчанию
-        self.map_widget.set_address("Томск")
+        self.map_widget.set_address("Tomsk")
         self.map_option_menu.set("OpenStreetMap")
+
+        # Запуск потока для получения данных
+        self.data_thread = threading.Thread(target=self.update_data)
+        self.data_thread.daemon = True
+        self.data_thread.start()
+
+    def update_data(self):
+        for data in rx_data():
+            self.imsi, self.RSSI, self.RXLev, self.TA, self.TE, self.lat, self.lon, self.msisdn = data
+            self.after(0, self.update_ui)
+            if not self.map_updated:
+                self.map_updated = True
+                self.after(0, self.update_map)
+
+    def update_ui(self):
+        if self.imsi not in self.known_imsis:
+            self.known_imsis.add(self.imsi)
+            abonent_number = len(self.known_imsis)
+            self.table.insert("", "end", values=(f"Абонент №{abonent_number}", self.imsi, self.msisdn))
+            self.output_field.insert("end", f"Абонент №{abonent_number}\nIMSI={self.imsi}\nMSISDN= {self.msisdn}\nRSSI={self.RSSI}\nTA={self.TA}\nRXLev={self.RXLev}\nTE={self.TE}\n\n")
+
+    def update_map(self):
+        self.map_widget.set_position(self.lat, self.lon)  # Установка позиции на метке
+        self.map_widget.set_zoom(30)  # Установка приближения на метку
 
     def search_event(self, event=None):
         self.map_widget.set_address(self.entry.get())
 
     def set_marker_event(self):
         while True:
-            lat1 = self.lat + self.i #Широта с добавочным значением
-            lon1 = self.lon + self.i #Долгота с добавочным значением
+            lat1 = self.lat  #Широта с добавочным значением
+            lon1 = self.lon   #Долгота с добавочным значением
             marker = self.map_widget.set_marker(lat1, lon1) #Установка метки по щироте и долготе
-            self.map_widget.set_position(lat1,lon1) #Установка позиции на метке
-            self.map_widget.set_zoom(16) #Установка приближения на метку
             self.marker_list.append(marker) #Добавление маркера в маркер лист для дальнейшего удаления
 
             # Увеличение значения i перед следующим вызовом метода
@@ -186,6 +214,13 @@ class App(customtkinter.CTk, tkinter.Tk):
     def start(self):
         self.mainloop()
 
+    def on_table_click(self, event):
+        selected_item = self.table.selection()
+        if selected_item:
+            item = self.table.item(selected_item)
+            imsi = item['values'][1]
+            self.output_field.delete(1.0, END)
+            self.output_field.insert("end", f"{item['values'][0]}\nIMSI={imsi}\nMSISDN= {self.msisdn}\nRSSI={self.RSSI}\nTA={self.TA}\nRXLev={self.RXLev}\nTE={self.TE}\n\n")
 
 if __name__ == "__main__":
     app = App()
