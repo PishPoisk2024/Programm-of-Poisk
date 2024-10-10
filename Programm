@@ -25,13 +25,13 @@ def rx_data():
             print(f"Invalid data format: {cleaned_data}")
             continue
 
-        imsi = int(values[0])
-        RSSI = int(values[1])
+        imsi = int(values[5])
+        RSSI = int(values[6])
         RXLev = int(values[2])
         TA = int(values[3])
         TE = int(values[4])
-        lat = float(values[5])
-        lon = float(values[6])
+        lat = float(values[0])
+        lon = float(values[1])
         msisdn = int(values[7])
 
         yield imsi, RSSI, RXLev, TA, TE, lat, lon, msisdn
@@ -39,7 +39,7 @@ def rx_data():
 class App(customtkinter.CTk, tkinter.Tk):
 
     APP_NAME = "Поиск с БПЛА" #Название программы
-    WIDTH = 1800 #Ширина окна
+    WIDTH = 1850 #Ширина окна
     HEIGHT = 900 #Высота окна
 
     def __init__(self, *args, **kwargs):
@@ -51,12 +51,13 @@ class App(customtkinter.CTk, tkinter.Tk):
         self.RXLev = 0
         self.TA = 0
         self.TE = 0
-        self.lat = 0.0
-        self.lon = 0.0
+        self.lat = 56.4519127
+        self.lon = 84.9622607
         self.msisdn = 0
         self.marker_list = [] #Лист с маркерами для их очистки
         self.map_updated = False # Флаг для отслеживания состояния обновления карты
-        self.known_imsis = set() # Множество для отслеживания уникальных значений IMSI
+        self.known_imsis = {} # Словарь для отслеживания уникальных значений IMSI и их данных
+        self.current_selection = None # Текущая выделенная строка
 
         self.title(App.APP_NAME)
         self.geometry(str(App.WIDTH) + "x" + str(App.HEIGHT))
@@ -83,7 +84,7 @@ class App(customtkinter.CTk, tkinter.Tk):
 
         self.map_label = customtkinter.CTkLabel(self.frame_left, text="Образ карты:", anchor="w")
         self.map_label.grid(row=2, column=0, padx=(20, 20), pady=(20, 0))
-        self.map_option_menu = customtkinter.CTkOptionMenu(self.frame_left, values=["OpenStreetMap", "Google normal", "Google satellite"],
+        self.map_option_menu = customtkinter.CTkOptionMenu(self.frame_left, values=["Google satellite", "Google normal", "OpenStreetMap"],
                                                                        command=self.change_map)
         self.map_option_menu.grid(row=4, column=0, padx=(20, 20), pady=(10, 0))
 
@@ -118,11 +119,21 @@ class App(customtkinter.CTk, tkinter.Tk):
         self.table.grid(pady=(52, 0), padx=(0, 0), row=0, column=2)
         self.table.bind("<ButtonRelease-1>", self.on_table_click)
 
-        self.label = tkinter.Label(text="Полезная информация:", master=self.frame_right1,width=75, height=1)
-        self.label.grid(pady=(50, 0), padx=(0, 0), row=2, column=2)
+        self.imsi_entry = customtkinter.CTkEntry(master=self.frame_right1,
+                                                placeholder_text="Введите IMSI")
+        self.imsi_entry.grid(pady=(10, 0), padx=(0, 0), row=1, column=2)
+        self.imsi_entry.bind("<Return>", self.search_imsi)
 
-        self.output_field = tkinter.Text(master=self.frame_right1, width=75, height=40)
-        self.output_field.grid(pady=(52, 0), padx=(0, 0), row=3, column=2)
+        self.mcc_mnc_entry = customtkinter.CTkEntry(master=self.frame_right1,
+                                                placeholder_text="Введите MCC_MNC")
+        self.mcc_mnc_entry.grid(pady=(10, 50), padx=(0, 0), row=2, column=2)
+        self.mcc_mnc_entry.bind("<Return>", self.search_mcc_mnc)
+
+        self.label = tkinter.Label(text="Полезная информация:", master=self.frame_right1,width=60, height=1)
+        self.label.grid(pady=(60, 0), padx=(0, 0), row=2, column=2)
+
+        self.output_field = tkinter.Text(master=self.frame_right1, width=75, height=30)
+        self.output_field.grid(pady=(10, 0), padx=(0, 0), row=3, column=2)
 
         self.button_5 = customtkinter.CTkButton(master=self.frame_right,
                                                 text="Поиск",
@@ -131,13 +142,25 @@ class App(customtkinter.CTk, tkinter.Tk):
         self.button_5.grid(row=0, column=0, sticky="w", padx=(0, 0), pady=0)
 
         # Установка параметров поумолчанию
-        self.map_widget.set_address("Tomsk")
+        self.map_widget.set_address("Томск")
         self.map_option_menu.set("OpenStreetMap")
+
+        # Установка начальной позиции и метки
+        self.update_map()
+        self.set_initial_marker()
 
         # Запуск потока для получения данных
         self.data_thread = threading.Thread(target=self.update_data)
         self.data_thread.daemon = True
         self.data_thread.start()
+
+    def update_map(self):
+        self.map_widget.set_position(self.lat, self.lon)  # Установка позиции на метке
+        self.map_widget.set_zoom(12)  # Установка приближения на метку
+
+    def set_initial_marker(self):
+        marker = self.map_widget.set_marker(self.lat, self.lon)  # Установка метки по широте и долготе
+        self.marker_list.append(marker)  # Добавление маркера в маркер лист для дальнейшего удаления
 
     def update_data(self):
         for data in rx_data():
@@ -149,27 +172,58 @@ class App(customtkinter.CTk, tkinter.Tk):
 
     def update_ui(self):
         if self.imsi not in self.known_imsis:
-            self.known_imsis.add(self.imsi)
+            self.known_imsis[self.imsi] = {
+                "RSSI": self.RSSI,
+                "RXLev": self.RXLev,
+                "TA": self.TA,
+                "TE": self.TE,
+                "lat": self.lat,
+                "lon": self.lon,
+                "msisdn": self.msisdn
+            }
             abonent_number = len(self.known_imsis)
             self.table.insert("", "end", values=(f"Абонент №{abonent_number}", self.imsi, self.msisdn))
+            self.output_field.delete(1.0, END)
             self.output_field.insert("end", f"Абонент №{abonent_number}\nIMSI={self.imsi}\nMSISDN= {self.msisdn}\nRSSI={self.RSSI}\nTA={self.TA}\nRXLev={self.RXLev}\nTE={self.TE}\n\n")
-
-    def update_map(self):
-        self.map_widget.set_position(self.lat, self.lon)  # Установка позиции на метке
-        self.map_widget.set_zoom(30)  # Установка приближения на метку
+        else:
+            self.known_imsis[self.imsi].update({
+                "RSSI": self.RSSI,
+                "RXLev": self.RXLev,
+                "TA": self.TA,
+                "TE": self.TE,
+                "lat": self.lat,
+                "lon": self.lon,
+                "msisdn": self.msisdn
+            })
+            self.output_field.delete(1.0, END)
+            self.output_field.insert("end", f"Обновление данных абонента №{list(self.known_imsis.keys()).index(self.imsi) + 1}\nIMSI={self.imsi}\nMSISDN= {self.msisdn}\nRSSI={self.RSSI}\nTA={self.TA}\nRXLev={self.RXLev}\nTE={self.TE}\n\n")
 
     def search_event(self, event=None):
         self.map_widget.set_address(self.entry.get())
 
+    def search_imsi(self, event=None):
+        imsi_to_find = self.imsi_entry.get()
+        for item in self.table.get_children():
+            values = self.table.item(item, 'values')
+            if values and str(values[1]) == imsi_to_find:
+                self.table.selection_set(item)
+                self.table.focus(item)
+                self.table.tag_configure("highlight", background="yellow")
+                self.table.item(item, tags=("highlight",))
+                break
+
+    def search_mcc_mnc(self, event=None):
+        mcc_mnc_to_find = self.mcc_mnc_entry.get()
+        for item in self.table.get_children():
+            values = self.table.item(item, 'values')
+            if values and str(values[1])[:5] == mcc_mnc_to_find:
+                self.table.tag_configure("highlight_green", background="green")
+                self.table.item(item, tags=("highlight_green",))
+
     def set_marker_event(self):
         while True:
-            lat1 = self.lat  #Широта с добавочным значением
-            lon1 = self.lon   #Долгота с добавочным значением
-            marker = self.map_widget.set_marker(lat1, lon1) #Установка метки по щироте и долготе
+            marker = self.map_widget.set_marker(self.lat, self.lon) #Установка метки по щироте и долготе
             self.marker_list.append(marker) #Добавление маркера в маркер лист для дальнейшего удаления
-
-            # Увеличение значения i перед следующим вызовом метода
-            self.i = self.i + 0.001
 
             # Создание приблизительного круга с помощью полигона
             radius_x = 0.0032  # предположим, что это радиус овала по оси x в градусах
@@ -178,8 +232,8 @@ class App(customtkinter.CTk, tkinter.Tk):
             circle_points = []
             for i in range(num_points):
                 angle = math.radians(i * (360.0 / num_points))
-                x = lat1 + radius_x * math.cos(angle)
-                y = lon1 + radius_y * math.sin(angle)
+                x = self.lat + radius_x * math.cos(angle)
+                y = self.lon + radius_y * math.sin(angle)
                 circle_points.append((x, y))
 
             polygon_1 = self.map_widget.set_polygon(circle_points, outline_color="black", border_width=1)  # creates the circle
@@ -201,12 +255,12 @@ class App(customtkinter.CTk, tkinter.Tk):
         customtkinter.set_appearance_mode(new_appearance_mode)
 
     def change_map(self, new_map: str):
-        if new_map == "OpenStreetMap":
-            self.map_widget.set_tile_server("https://a.tile.openstreetmap.org/{z}/{x}/{y}.png")
+        if new_map == "Google satellite":
+            self.map_widget.set_tile_server("https://mt0.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}&s=Ga", max_zoom=25)
         elif new_map == "Google normal":
             self.map_widget.set_tile_server("https://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga", max_zoom=22)
-        elif new_map == "Google satellite":
-            self.map_widget.set_tile_server("https://mt0.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}&s=Ga", max_zoom=22)
+        elif new_map == "OpenStreetMap":
+            self.map_widget.set_tile_server("https://a.tile.openstreetmap.org/{z}/{x}/{y}.png")
 
     def on_closing(self, event=0):
         self.destroy()
@@ -217,10 +271,15 @@ class App(customtkinter.CTk, tkinter.Tk):
     def on_table_click(self, event):
         selected_item = self.table.selection()
         if selected_item:
+            if self.current_selection:
+                self.table.item(self.current_selection, tags=())  # Сброс выделения предыдущей строки
             item = self.table.item(selected_item)
             imsi = item['values'][1]
-            self.output_field.delete(1.0, END)
-            self.output_field.insert("end", f"{item['values'][0]}\nIMSI={imsi}\nMSISDN= {self.msisdn}\nRSSI={self.RSSI}\nTA={self.TA}\nRXLev={self.RXLev}\nTE={self.TE}\n\n")
+            if imsi in self.known_imsis:
+                data = self.known_imsis[imsi]
+                self.output_field.delete(1.0, END)
+                self.output_field.insert("end", f"Абонент №{list(self.known_imsis.keys()).index(imsi) + 1}\nIMSI={imsi}\nMSISDN= {data['msisdn']}\nRSSI={data['RSSI']}\nTA={data['TA']}\nRXLev={data['RXLev']}\nTE={data['TE']}\n\n")
+            self.current_selection = selected_item  # Обновление текущей выделенной строки
 
 if __name__ == "__main__":
     app = App()
