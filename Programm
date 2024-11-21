@@ -1,3 +1,4 @@
+import random
 import tkinter
 import customtkinter
 from tkinter import *
@@ -7,6 +8,17 @@ import time
 import threading
 import math
 import serial
+from PIL import Image, ImageTk, ImageDraw
+
+def create_rounded_rectangle(width, height, radius, fill_color):
+    # Создание пустого изображения
+    image = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(image)
+
+    # Рисование закругленного прямоугольника
+    draw.rounded_rectangle((0, 0, width, height), radius, fill=fill_color)
+
+    return image
 
 def rx_data():
     portRx = serial.Serial('COM5', baudrate=115200)
@@ -37,58 +49,70 @@ def rx_data():
         yield imsi, RSSI, RXLev, TA, TE, lat, lon, msisdn
 
 class App(customtkinter.CTk, tkinter.Tk):
-
-    APP_NAME = "Поиск с БПЛА" #Название программы
-    WIDTH = 1850 #Ширина окна
-    HEIGHT = 900 #Высота окна
+    APP_NAME = "Поиск с БПЛА"  # Название программы
+    WIDTH = 1800  # Ширина окна
+    HEIGHT = 900  # Высота окна
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        pad = 0
 
-        self.i = 0.0001 #Добавочное значение к координатам
+        # Банк данных
+        self.i = 0.0001  # Добавочное значение к координатам
         self.imsi = 0
         self.RSSI = 0
         self.RXLev = 0
         self.TA = 0
         self.TE = 0
-        self.lat = 56.4519127
-        self.lon = 84.9622607
+        self.lat = 56.453140
+        self.lon = 84.975667
         self.msisdn = 0
-        self.marker_list = [] #Лист с маркерами для их очистки
-        self.map_updated = False # Флаг для отслеживания состояния обновления карты
-        self.known_imsis = {} # Словарь для отслеживания уникальных значений IMSI и их данных
-        self.current_selection = None # Текущая выделенная строка
+        self.marker_list = []  # Лист с маркерами для их очистки
+        self.map_updated = False  # Флаг для отслеживания состояния обновления карты
+        self.known_imsis = {}  # Словарь для отслеживания уникальных значений IMSI и их данных
+        self.current_selection = None  # Текущая выделенная строка
 
+        # Разметка окна
         self.title(App.APP_NAME)
         self.geometry(str(App.WIDTH) + "x" + str(App.HEIGHT))
         self.minsize(App.WIDTH, App.HEIGHT)
+
+        # Переход в полноэкранный режим
+        self.bind("<F11>", lambda event: self.attributes("-fullscreen",
+                                                         not self.attributes("-fullscreen")))
+        self.bind("<Escape>", lambda event: self.attributes("-fullscreen", False))
+        self.geometry("{0}x{1}+0+0".format(
+            self.winfo_screenwidth() - pad, self.winfo_screenheight() - pad))
 
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
         self.bind("<Command-q>", self.on_closing)
         self.bind("<Command-w>", self.on_closing)
         self.createcommand('tk::mac::Quit', self.on_closing)
 
+        # Установка цвета фона для основного окна
+        self.configure(fg_color="#42467B")  # RGB (66, 70, 155)
+
         # ============ Создание двух областей ============
         self.grid_columnconfigure(0, weight=0)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
 
-        self.frame_left = customtkinter.CTkFrame(master=self, width=150, corner_radius=0, fg_color=None)
+        self.frame_left = customtkinter.CTkFrame(master=self, corner_radius=0, fg_color="#42467B")
         self.frame_left.grid(row=0, column=0, padx=0, pady=0, sticky="nsew")
 
-        self.frame_right = customtkinter.CTkFrame(master=self, corner_radius=0)
+        self.frame_right = customtkinter.CTkFrame(master=self, corner_radius=0, fg_color="#42467B")
         self.frame_right.grid(row=0, column=1, rowspan=1, pady=0, padx=0, sticky="nsew")
 
         # ============ Левая область ============
         self.frame_left.grid_rowconfigure(2, weight=1)
+        self.map_option_menu = customtkinter.CTkOptionMenu(self.frame_right, values=["Google satellite", "Google normal",
+                                                                                    "OpenStreetMap"],
+                                                           command=self.change_map, width=180,
+                                                           font=("TimesNewRoman", 16), fg_color="#3FCC60",
+                                                           text_color="black")
+        self.map_option_menu.grid(row=0, column=0, padx=(0, 0), pady=(0, 0))
 
-        self.map_label = customtkinter.CTkLabel(self.frame_left, text="Образ карты:", anchor="w")
-        self.map_label.grid(row=2, column=0, padx=(20, 20), pady=(20, 0))
-        self.map_option_menu = customtkinter.CTkOptionMenu(self.frame_left, values=["Google satellite", "Google normal", "OpenStreetMap"],
-                                                                       command=self.change_map)
-        self.map_option_menu.grid(row=4, column=0, padx=(20, 20), pady=(10, 0))
-
-        # ============ Правая область ============
+        # ============ Центральная область ============
         self.frame_right.grid_rowconfigure(1, weight=1)
         self.frame_right.grid_rowconfigure(0, weight=0)
         self.frame_right.grid_columnconfigure(0, weight=1)
@@ -98,52 +122,100 @@ class App(customtkinter.CTk, tkinter.Tk):
         self.map_widget = TkinterMapView(self.frame_right, corner_radius=0)
         self.map_widget.grid(row=1, rowspan=1, column=0, columnspan=3, sticky="nswe", padx=(0, 0), pady=(0, 0))
 
-        self.entry = customtkinter.CTkEntry(master=self.frame_right,
-                                            placeholder_text="Введите адресс")
+        self.entry = customtkinter.CTkEntry(master=self.frame_right, width=320, justify=CENTER,
+                                            placeholder_text="Введите адресс", font=("TimesNewRoman", 16))
         self.entry.grid(row=0, column=1, sticky="we", padx=(12, 12), pady=12)
         self.entry.bind("<Return>", self.search_event)
 
-        self.frame_right1 = customtkinter.CTkFrame(master=self, corner_radius=0)
-        self.frame_right1.grid(row=0, column=2, rowspan=1, pady=0, padx=0, sticky="nsew")
+        self.button_5 = customtkinter.CTkButton(master=self.frame_right,
+                                                text="Поиск",
+                                                width=90,
+                                                command=self.search_event, fg_color="#3FCC60", text_color="black")
+        self.button_5.grid(row=0, column=2, sticky="w", padx=(0, 0), pady=0)
 
+        # Установка параметров поумолчанию
+        self.map_widget.set_address("Томск")
+        self.map_option_menu.set("Выбор карты")
+
+        # ============ Правая область ============
+        self.frame_right1 = customtkinter.CTkFrame(master=self, corner_radius=0, fg_color="#42467B")
+        self.frame_right1.grid(row=0, column=2, rowspan=1, pady=0, padx=0, sticky="nsew")
+        # Создание отдельного фрейма для информациии
+        self.frame_info = customtkinter.CTkFrame(master=self.frame_right1, corner_radius=0, fg_color="#42467B")
+        self.frame_info.grid(row=2, column=2, pady=(0, 0), padx=(0, 0), sticky="nsew")
+        # Создание отдельного фрейма для таблицы
+        self.frame_table = customtkinter.CTkFrame(master=self.frame_right1, corner_radius=0, fg_color="#42467B")
+        self.frame_table.grid(row=1, column=2, pady=(0, 0), padx=(0, 0), sticky="nsew")
+        # Разметка правого фрейма
         self.frame_right1.grid_rowconfigure(1, weight=1)
         self.frame_right1.grid_rowconfigure(0, weight=0)
         self.frame_right1.grid_columnconfigure(0, weight=1)
         self.frame_right1.grid_columnconfigure(1, weight=0)
         self.frame_right1.grid_columnconfigure(2, weight=1)
 
-        self.table = ttk.Treeview(columns=("Абонент", "IMSI", "Номер"), show="headings", master=self.frame_right1)
-        self.table.heading("Абонент", text="Абонент", anchor="nw")
-        self.table.heading("IMSI", text="IMSI", anchor="nw")
-        self.table.heading("Номер", text="Номер", anchor="nw")
-        self.table.grid(pady=(52, 0), padx=(0, 0), row=0, column=2)
+        # Добавление логотипа
+        self.logo_frame = customtkinter.CTkFrame(master=self.frame_left, corner_radius=0, fg_color="#42467B")
+        self.logo_frame.grid(row=3, column=0, pady=(0, 0), padx=(0, 0), sticky="nsew")
+
+        self.logo_image = Image.open("C:/Users/User2/PycharmProjects/GPS/logo_ru.png")
+        self.logo_image = self.logo_image.resize((220, 100), Image.LANCZOS)
+        self.logo_photo = ImageTk.PhotoImage(self.logo_image)
+        self.logo_label = tkinter.Label(master=self.logo_frame, image=self.logo_photo, bg='#42467B')
+        self.logo_label.grid(row=2, column=0, pady=(50, 50), padx=(30, 0), sticky="se")
+
+        # Добавление таблицы и ее стиля
+        style = ttk.Style()
+        style.theme_use("clam")
+        style.configure("Treeview.Heading", font=('TimesNewRoman', 12), borderwidth=1, relief="solid", bordercolor='black')
+        style.configure("Treeview", rowheight=25, font=('TimesNewRoman', 12), borderwidth=1, relief="solid", bordercolor='black', anchor="center")
+        self.table = ttk.Treeview(columns=("Абонент", "IMSI", "Номер"), show="headings", master=self.frame_table, height=15)
+        self.table.heading("Абонент", text="Абонент", anchor="center")
+        self.table.heading("IMSI", text="IMSI", anchor="center")
+        self.table.heading("Номер", text="Номер", anchor="center")
+        self.table.grid(pady=(51, 0), padx=(0, 0), row=0, column=2)
         self.table.bind("<ButtonRelease-1>", self.on_table_click)
 
-        self.imsi_entry = customtkinter.CTkEntry(master=self.frame_right1,
-                                                placeholder_text="Введите IMSI")
-        self.imsi_entry.grid(pady=(10, 0), padx=(0, 0), row=1, column=2)
+        # Создание прямоугольника без заливки с черными гранями
+        rectangle_canvas = tkinter.Canvas(master=self.frame_left, width=180, height=100, bg='#42467B',
+                                          highlightthickness=2, highlightbackground="white")
+        rectangle_canvas.grid(row=1, column=0, pady=(52, 0), padx=(1, 1), sticky="nsew")
+
+        # Область заполнения IMSI MCC_MNC
+        self.imsi_entry = customtkinter.CTkEntry(master=rectangle_canvas,
+                                                 placeholder_text="Введите IMSI", justify=CENTER,
+                                                 font=("TimesNewRoman", 16), width=160)
+        self.imsi_entry.grid(pady=(10, 5), padx=(10, 10), row=0, column=0)
         self.imsi_entry.bind("<Return>", self.search_imsi)
 
-        self.mcc_mnc_entry = customtkinter.CTkEntry(master=self.frame_right1,
-                                                placeholder_text="Введите MCC_MNC")
-        self.mcc_mnc_entry.grid(pady=(10, 50), padx=(0, 0), row=2, column=2)
+        self.mcc_mnc_entry = customtkinter.CTkEntry(master=rectangle_canvas,
+                                                    placeholder_text="Введите MCC_MNC", justify=CENTER,
+                                                    font=("TimesNewRoman", 16), width=160)
+        self.mcc_mnc_entry.grid(pady=(5, 5), padx=(10, 10), row=1, column=0)
         self.mcc_mnc_entry.bind("<Return>", self.search_mcc_mnc)
 
-        self.label = tkinter.Label(text="Полезная информация:", master=self.frame_right1,width=60, height=1)
-        self.label.grid(pady=(60, 0), padx=(0, 0), row=2, column=2)
+        # Добавление кнопки "Применить"
+        self.button_imsi = customtkinter.CTkButton(master=rectangle_canvas,
+                                                   text="Применить",
+                                                   width=90,
+                                                   command=self.apply_filters, fg_color="#3FCC60", text_color="black")
+        self.button_imsi.grid(row=0, column=2, sticky="w", padx=(0, 10), pady=(5, 0))
 
-        self.output_field = tkinter.Text(master=self.frame_right1, width=75, height=30)
-        self.output_field.grid(pady=(10, 0), padx=(0, 0), row=3, column=2)
+        # Индикатор сигнала и подпись
+        self.prach_label = customtkinter.CTkLabel(master=rectangle_canvas, text="Сигнал не обнаружен",
+                                                  font=("TimesNewRoman", 16), text_color="white", width=150)
+        self.prach_label.grid(pady=(5, 10), padx=(0, 0), row=2, column=0)
 
-        self.button_5 = customtkinter.CTkButton(master=self.frame_right,
-                                                text="Поиск",
-                                                width=90,
-                                                command=self.search_event)
-        self.button_5.grid(row=0, column=0, sticky="w", padx=(0, 0), pady=0)
+        self.prach_indicator_image = create_rounded_rectangle(15, 15, 20, "red")
+        self.prach_indicator_photo = ImageTk.PhotoImage(self.prach_indicator_image)
+        self.prach_indicator = tkinter.Label(master=rectangle_canvas, image=self.prach_indicator_photo, bg='#42467B')
+        self.prach_indicator.grid(pady=(0, 0), padx=(190, 0), row=2, column=0)
 
-        # Установка параметров поумолчанию
-        self.map_widget.set_address("Томск")
-        self.map_option_menu.set("OpenStreetMap")
+        # Панель полезная информация и область ее вывода
+        self.info_label = customtkinter.CTkLabel(master=self.frame_info, text="Полезная информация",
+                                                 font=("TimesNewRoman", 16), text_color="white", width=150)
+        self.info_label.grid(row=0, column=0, pady=(0, 0), padx=(240, 0), sticky="w")
+        self.output_field = tkinter.Text(master=self.frame_info, width=75, height=36)
+        self.output_field.grid(row=1, column=0, pady=(0, 0), padx=(0, 0), sticky="nsew")
 
         # Установка начальной позиции и метки
         self.update_map()
@@ -153,6 +225,118 @@ class App(customtkinter.CTk, tkinter.Tk):
         self.data_thread = threading.Thread(target=self.update_data)
         self.data_thread.daemon = True
         self.data_thread.start()
+
+        ################################################################################################################
+        #                                               ДАННЫЕ БПЛА                                                    #
+        ################################################################################################################
+        self.battery_level = 95
+        self.navigation = random.randint(1,3)
+
+        rectangle_canvas_1 = tkinter.Canvas(master=self.frame_left, width=180, height=100, bg='#42467B',
+                                          highlightthickness=2, highlightbackground="white")
+        rectangle_canvas_1.grid(row=2, column=0, pady=(50, 0), padx=(2, 1), sticky="nsew")
+
+        self.ss_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text="СОСТОЯНИЕ БПЛА",
+                                                               font=("TimesNewRoman", 16), text_color="white")
+        self.ss_label.grid(pady=(40, 0), padx=(25, 0), row=2, column=0)
+
+        self.del_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text="_________________________",
+                                                               font=("TimesNewRoman", 16), text_color="white")
+        self.del_label.grid(pady=(0, 0), padx=(25, 0), row=3, column=0)
+
+        self.battery_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text="Заряд батареи:",
+                                                    font=("TimesNewRoman", 16), text_color="white", width=150)
+        self.battery_label.grid(pady=(10, 0), padx=(0, 90), row=4, column=0)
+
+        self.battery_value_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text=f"{self.battery_level}%",
+                                                          font=("TimesNewRoman", 16), text_color="white", width=20)
+        self.battery_value_label.grid(pady=(10, 0), padx=(90, 0), row=4, column=0)
+
+        self.channel_status_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text="Состояние канала связи:",
+                                                           font=("TimesNewRoman", 16), text_color="white", width=150)
+        self.channel_status_label.grid(pady=(10, 0), padx=(0, 20), row=5, column=0)
+
+        self.engines_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text="Двигатели:",
+                                                    font=("TimesNewRoman", 16), text_color="white", width=100)
+        self.engines_label.grid(pady=(10, 0), padx=(0, 120), row=6, column=0)
+
+        self.engine_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text="Off",
+                                                    font=("TimesNewRoman", 16), text_color="white", width=10)
+        self.engine_label.grid(pady=(10, 0), padx=(10, 0), row=6, column=0)
+
+        self.engines_frq_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text="Скорость двигателей:",
+                                                    font=("TimesNewRoman", 16), text_color="white", width=150)
+        self.engines_frq_label.grid(pady=(10, 0), padx=(0, 40), row=7, column=0)
+
+        self.engine_frq_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text="0 об/мин",
+                                                    font=("TimesNewRoman", 16), text_color="white", width=10)
+        self.engine_frq_label.grid(pady=(10, 0), padx=(200, 0), row=7, column=0)
+
+        self.del_label1 = customtkinter.CTkLabel(master=rectangle_canvas_1, text="_________________________",
+                                                               font=("TimesNewRoman", 16), text_color="white")
+        self.del_label1.grid(pady=(0, 0), padx=(25, 0), row=8, column=0)
+
+        self.navigation_systems_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text="НАВИГАЦИОННЫЕ СИСТЕМЫ",
+                                                               font=("TimesNewRoman", 16), text_color="white",
+                                                               width=150)
+        self.navigation_systems_label.grid(pady=(10, 0), padx=(25, 0), row=9, column=0)
+
+        self.del_label2 = customtkinter.CTkLabel(master=rectangle_canvas_1, text="_________________________",
+                                                               font=("TimesNewRoman", 16), text_color="white")
+        self.del_label2.grid(pady=(0, 0), padx=(25, 0), row=10, column=0)
+
+
+        self.gps_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text="GPS:",
+                                                               font=("TimesNewRoman", 16), text_color="white",
+                                                               width=95)
+        self.gps_label.grid(pady=(10, 0), padx=(0, 160), row=11, column=0)
+
+        self.gps_s_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text=f"On",
+                                                          font=("TimesNewRoman", 16), text_color="white", width=20)
+        self.gps_s_label.grid(pady=(10, 0), padx=(0, 80), row=11, column=0)
+
+        self.navigation_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text="Кол-во спутников:",
+                                                               font=("TimesNewRoman", 16), text_color="white",
+                                                               width=150)
+        self.navigation_label.grid(pady=(10, 0), padx=(0, 70), row=12, column=0)
+
+        self.navigation_label_k = customtkinter.CTkLabel(master=rectangle_canvas_1, text=f"{self.navigation}",
+                                                       font=("TimesNewRoman", 16), text_color="white",
+                                                       width=5)
+        self.navigation_label_k.grid(pady=(10, 0), padx=(80, 0), row=12, column=0)
+
+        self.flight_control_systems_label = customtkinter.CTkLabel(master=rectangle_canvas_1,
+                                                                   text="Автопилот:",
+                                                                   font=("TimesNewRoman", 16), text_color="white",
+                                                                   width=100)
+        self.flight_control_systems_label.grid(pady=(10, 0), padx=(0, 120), row=13, column=0)
+
+        self.flight_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text=f"Off",
+                                                          font=("TimesNewRoman", 16), text_color="white", width=20)
+        self.flight_label.grid(pady=(10, 0), padx=(0, 0), row=13, column=0)
+
+        # Функция для обновления заряда батареи
+        # def update_battery_level():
+        #     if self.battery_level > 0:
+        #         self.battery_level -= 1
+        #         self.battery_value_label.configure(text=f"{self.battery_level}%")
+        #     self.after(10000, update_battery_level)  # Обновление каждые 10 секунд
+
+        # # Запуск функции обновления заряда батареи
+        # self.after(15000, update_battery_level)
+
+        def update_navigation():
+            if self.navigation > 0:
+                self.navigation = random.randint(1,4)
+                self.navigation_label_k.configure(text=f"{self.navigation}")
+            self.after(15000, update_navigation)  # Обновление каждые 15 секунд
+
+         # Запуск функции обновления заряда батареи
+        self.after(15000, update_navigation)
+
+    def apply_filters(self):
+        self.search_imsi()
+        self.search_mcc_mnc()
 
     def update_map(self):
         self.map_widget.set_position(self.lat, self.lon)  # Установка позиции на метке
@@ -184,7 +368,8 @@ class App(customtkinter.CTk, tkinter.Tk):
             abonent_number = len(self.known_imsis)
             self.table.insert("", "end", values=(f"Абонент №{abonent_number}", self.imsi, self.msisdn))
             self.output_field.delete(1.0, END)
-            self.output_field.insert("end", f"Абонент №{abonent_number}\nIMSI={self.imsi}\nMSISDN= {self.msisdn}\nRSSI={self.RSSI}\nTA={self.TA}\nRXLev={self.RXLev}\nTE={self.TE}\n\n")
+            self.output_field.insert("end",
+                                     f"Абонент №{abonent_number}\nIMSI={self.imsi}\nMSISDN= {self.msisdn}\nRSSI={self.RSSI}\nTA={self.TA}\nRXLev={self.RXLev}\nTE={self.TE}\n\n")
         else:
             self.known_imsis[self.imsi].update({
                 "RSSI": self.RSSI,
@@ -196,7 +381,17 @@ class App(customtkinter.CTk, tkinter.Tk):
                 "msisdn": self.msisdn
             })
             self.output_field.delete(1.0, END)
-            self.output_field.insert("end", f"Обновление данных абонента №{list(self.known_imsis.keys()).index(self.imsi) + 1}\nIMSI={self.imsi}\nMSISDN= {self.msisdn}\nRSSI={self.RSSI}\nTA={self.TA}\nRXLev={self.RXLev}\nTE={self.TE}\n\n")
+            self.output_field.insert("end",
+                                     f"Обновление данных абонента №{list(self.known_imsis.keys()).index(self.imsi) + 1}\nIMSI={self.imsi}\nMSISDN= {self.msisdn}\nRSSI={self.RSSI}\nTA={self.TA}\nRXLev={self.RXLev}\nTE={self.TE}\n\n")
+
+        # Обновление поля для отображения информации о детектировании сигнала PRACH
+        # Обновление индикатора PRACH
+        if self.RXLev > 0:
+            self.prach_indicator.configure(bg="green")
+            self.prach_label.configure(text="Сигнал обнаружен", font=("TimesNewRoman", 16), text_color="white", )
+        else:
+            self.prach_indicator.configure(bg="red")
+            self.prach_label.configure(text="Сигнал не обнаружен", font=("TimesNewRoman", 16), text_color="white", )
 
     def search_event(self, event=None):
         self.map_widget.set_address(self.entry.get())
@@ -222,8 +417,8 @@ class App(customtkinter.CTk, tkinter.Tk):
 
     def set_marker_event(self):
         while True:
-            marker = self.map_widget.set_marker(self.lat, self.lon) #Установка метки по щироте и долготе
-            self.marker_list.append(marker) #Добавление маркера в маркер лист для дальнейшего удаления
+            marker = self.map_widget.set_marker(self.lat, self.lon)  # Установка метки по щироте и долготе
+            self.marker_list.append(marker)  # Добавление маркера в маркер лист для дальнейшего удаления
 
             # Создание приблизительного круга с помощью полигона
             radius_x = 0.0032  # предположим, что это радиус овала по оси x в градусах
@@ -236,12 +431,13 @@ class App(customtkinter.CTk, tkinter.Tk):
                 y = self.lon + radius_y * math.sin(angle)
                 circle_points.append((x, y))
 
-            polygon_1 = self.map_widget.set_polygon(circle_points, outline_color="black", border_width=1)  # creates the circle
+            polygon_1 = self.map_widget.set_polygon(circle_points, outline_color="black",
+                                                    border_width=1)  # creates the circle
 
             # Задержка перед следующим обновлением
             time.sleep(1)
 
-            #Очистка предыдущего маркера и круга
+            # Очистка предыдущего маркера и круга
             for marker in self.marker_list:
                 marker.delete()
             polygon_1.delete()
@@ -256,9 +452,11 @@ class App(customtkinter.CTk, tkinter.Tk):
 
     def change_map(self, new_map: str):
         if new_map == "Google satellite":
-            self.map_widget.set_tile_server("https://mt0.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}&s=Ga", max_zoom=25)
+            self.map_widget.set_tile_server("https://mt0.google.com/vt/lyrs=s&hl=en&x={x}&y={y}&z={z}&s=Ga",
+                                            max_zoom=25)
         elif new_map == "Google normal":
-            self.map_widget.set_tile_server("https://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga", max_zoom=22)
+            self.map_widget.set_tile_server("https://mt0.google.com/vt/lyrs=m&hl=en&x={x}&y={y}&z={z}&s=Ga",
+                                            max_zoom=22)
         elif new_map == "OpenStreetMap":
             self.map_widget.set_tile_server("https://a.tile.openstreetmap.org/{z}/{x}/{y}.png")
 
@@ -278,8 +476,10 @@ class App(customtkinter.CTk, tkinter.Tk):
             if imsi in self.known_imsis:
                 data = self.known_imsis[imsi]
                 self.output_field.delete(1.0, END)
-                self.output_field.insert("end", f"Абонент №{list(self.known_imsis.keys()).index(imsi) + 1}\nIMSI={imsi}\nMSISDN= {data['msisdn']}\nRSSI={data['RSSI']}\nTA={data['TA']}\nRXLev={data['RXLev']}\nTE={data['TE']}\n\n")
+                self.output_field.insert("end",
+                                         f"Абонент №{list(self.known_imsis.keys()).index(imsi) + 1}\nIMSI={imsi}\nMSISDN= {data['msisdn']}\nRSSI={data['RSSI']}\nTA={data['TA']}\nRXLev={data['RXLev']}\nTE={data['TE']}\n\n")
             self.current_selection = selected_item  # Обновление текущей выделенной строки
+
 
 if __name__ == "__main__":
     app = App()
