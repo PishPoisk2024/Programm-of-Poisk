@@ -64,13 +64,17 @@ class App(customtkinter.CTk, tkinter.Tk):
         self.RXLev = 0
         self.TA = 0
         self.TE = 0
-        self.lat = 56.453140
-        self.lon = 84.975667
+        self.lat = 56.451807
+        self.lon = 84.961653
         self.msisdn = 0
+        self.manual_marker_list = []
         self.marker_list = []  # Лист с маркерами для их очистки
         self.map_updated = False  # Флаг для отслеживания состояния обновления карты
         self.known_imsis = {}  # Словарь для отслеживания уникальных значений IMSI и их данных
         self.current_selection = None  # Текущая выделенная строка
+        self.target_lat = None  # Широта целевой точки
+        self.target_lon = None  # Долгота целевой точки
+        self.distance = 0  # Расстояние до целевой точки
 
         # Разметка окна
         self.title(App.APP_NAME)
@@ -217,6 +221,8 @@ class App(customtkinter.CTk, tkinter.Tk):
         self.output_field = tkinter.Text(master=self.frame_info, width=75, height=36)
         self.output_field.grid(row=1, column=0, pady=(0, 0), padx=(0, 0), sticky="nsew")
 
+
+
         # Установка начальной позиции и метки
         self.update_map()
         self.set_initial_marker()
@@ -285,7 +291,6 @@ class App(customtkinter.CTk, tkinter.Tk):
                                                                font=("TimesNewRoman", 16), text_color="white")
         self.del_label2.grid(pady=(0, 0), padx=(25, 0), row=10, column=0)
 
-
         self.gps_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text="GPS:",
                                                                font=("TimesNewRoman", 16), text_color="white",
                                                                width=95)
@@ -315,15 +320,24 @@ class App(customtkinter.CTk, tkinter.Tk):
                                                           font=("TimesNewRoman", 16), text_color="white", width=20)
         self.flight_label.grid(pady=(10, 0), padx=(0, 0), row=13, column=0)
 
-        # Функция для обновления заряда батареи
-        # def update_battery_level():
-        #     if self.battery_level > 0:
-        #         self.battery_level -= 1
-        #         self.battery_value_label.configure(text=f"{self.battery_level}%")
-        #     self.after(10000, update_battery_level)  # Обновление каждые 10 секунд
+        # Поле для ввода координат
+        self.coord_entry = customtkinter.CTkEntry(master=rectangle_canvas_1, width=170, justify=CENTER,
+                                                  placeholder_text="Введите координаты", font=("TimesNewRoman", 16))
+        self.coord_entry.grid(pady=(10, 0), padx=(0, 120), row=14, column=0)
+        self.coord_entry.bind("<Return>", self.set_marker_by_coordinates)
 
-        # # Запуск функции обновления заряда батареи
-        # self.after(15000, update_battery_level)
+        # Кнопка для установки метки по координатам
+        self.button_set_marker = customtkinter.CTkButton(master=rectangle_canvas_1,
+                                                         text="Установить метку",
+                                                         width=90,
+                                                         command=self.set_marker_by_coordinates, fg_color="#3FCC60",
+                                                         text_color="black")
+        self.button_set_marker.grid(row=14, column=0, sticky="w", padx=(180, 0), pady=(10, 0))
+
+        # Поле для отображения расстояния
+        self.distance_label = customtkinter.CTkLabel(master=rectangle_canvas_1, text="Расстояние: 0 м",
+                                                    font=("TimesNewRoman", 16), text_color="white", width=150)
+        self.distance_label.grid(pady=(10, 0), padx=(0, 0), row=15, column=0)
 
         def update_navigation():
             if self.navigation > 0:
@@ -393,6 +407,11 @@ class App(customtkinter.CTk, tkinter.Tk):
             self.prach_indicator.configure(bg="red")
             self.prach_label.configure(text="Сигнал не обнаружен", font=("TimesNewRoman", 16), text_color="white", )
 
+        # Расчет расстояния до целевой точки
+        if self.target_lat is not None and self.target_lon is not None:
+            self.distance = self.haversine(self.lat, self.lon, self.target_lat, self.target_lon)
+            self.distance_label.configure(text=f"Расстояние: {self.distance:.2f} м")
+
     def search_event(self, event=None):
         self.map_widget.set_address(self.entry.get())
 
@@ -415,9 +434,30 @@ class App(customtkinter.CTk, tkinter.Tk):
                 self.table.tag_configure("highlight_green", background="green")
                 self.table.item(item, tags=("highlight_green",))
 
+    def set_marker_by_coordinates(self, event=None):
+        coordinates = self.coord_entry.get()
+        try:
+            self.target_lat, self.target_lon = map(float, coordinates.split(','))
+            # Удаление предыдущего маркера, если он существует
+            if self.manual_marker_list:
+                for marker in self.manual_marker_list:
+                    marker.delete()
+                self.manual_marker_list.clear()
+
+            marker = self.map_widget.set_marker(self.target_lat, self.target_lon, text= "НПУ")  # Установка метки по широте и долготе
+            self.manual_marker_list.append(marker)  # Добавление маркера в маркер лист для дальнейшего удаления
+            self.update_distance()  # Обновление расстояния
+        except ValueError:
+            print("Неверный формат координат. Введите координаты в формате 'широта,долгота'.")
+
+    def update_distance(self):
+        if self.target_lat is not None and self.target_lon is not None:
+            self.distance = self.haversine(self.lat, self.lon, self.target_lat, self.target_lon)
+            self.distance_label.configure(text=f"Расстояние: {self.distance:.2f} м")
+
     def set_marker_event(self):
         while True:
-            marker = self.map_widget.set_marker(self.lat, self.lon)  # Установка метки по щироте и долготе
+            marker = self.map_widget.set_marker(self.lat, self.lon, text= "БПЛА")  # Установка метки по широте и долготе
             self.marker_list.append(marker)  # Добавление маркера в маркер лист для дальнейшего удаления
 
             # Создание приблизительного круга с помощью полигона
@@ -441,6 +481,7 @@ class App(customtkinter.CTk, tkinter.Tk):
             for marker in self.marker_list:
                 marker.delete()
             polygon_1.delete()
+
 
     def set_marker_event1(self):
         t = threading.Thread(target=self.set_marker_event)
@@ -480,6 +521,20 @@ class App(customtkinter.CTk, tkinter.Tk):
                                          f"Абонент №{list(self.known_imsis.keys()).index(imsi) + 1}\nIMSI={imsi}\nMSISDN= {data['msisdn']}\nRSSI={data['RSSI']}\nTA={data['TA']}\nRXLev={data['RXLev']}\nTE={data['TE']}\n\n")
             self.current_selection = selected_item  # Обновление текущей выделенной строки
 
+    def haversine(self, lat1, lon1, lat2, lon2):
+        # Радиус Земли в метрах
+        R = 6371000
+        # Преобразование градусов в радианы
+        phi1 = math.radians(lat1)
+        phi2 = math.radians(lat2)
+        dphi = math.radians(lat2 - lat1)
+        dlambda = math.radians(lon2 - lon1)
+
+        a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+        distance = R * c
+        return distance
 
 if __name__ == "__main__":
     app = App()
